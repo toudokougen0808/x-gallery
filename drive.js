@@ -268,12 +268,32 @@
   // ---- 画面から呼ぶ関数（Apps Script 版の Code.gs と同じ形の結果を返す） ----
 
   // ジャンル（直下のフォルダ。_ で始まるものとゴミ箱は除く）の一覧
+  // 並び順は PC のギャラリーと同じ（_web/settings.json の genreOrder。無いものは後ろに五十音順、「未分類」はその後ろ）
   XG.getGenres = function () {
-    return kids(true).then(function (k) {
+    return Promise.all([kids(true), readJson('settings.json', {})]).then(function (r) {
+      var k = r[0], order = Array.isArray(r[1].genreOrder) ? r[1].genreOrder : [];
       var out = [];
       Object.keys(k.byId).forEach(function (id) { if (id !== k.trash) out.push({ name: k.byId[id], id: id }); });
-      out.sort(function (a, b) { return a.name.localeCompare(b.name, 'ja'); });
+      var pos = function (g) { var i = order.indexOf(g.name); return i < 0 ? Infinity : i; };
+      var rank = function (g) { return g.name === '未分類' ? 1 : 0; };
+      out.sort(function (a, b) { return (pos(a) - pos(b)) || (rank(a) - rank(b)) || a.name.localeCompare(b.name, 'ja'); });
+      if (k.trash) out.push({ name: TRASH_NAME, id: k.trash, trash: true });
       return out;
+    });
+  };
+  function readJson(name, empty) {
+    return webFiles(false).then(function (w) {
+      if (!w[name]) return empty;
+      return readText(w[name].id).then(function (buf) { return JSON.parse(dec.decode(buf)) || empty; });
+    }).catch(function () { return empty; });
+  }
+
+  // ゴミ箱へ入れた日時 { ファイル名: ミリ秒 }（ゴミ箱のタブを、入れた順に並べるのに使う）
+  XG.getTrashLog = function () {
+    return webFiles(true).then(function () { return readJson('trash.json', { files: {} }); }).then(function (o) {
+      var m = {};
+      Object.keys(o.files || {}).forEach(function (n) { m[n] = Date.parse(o.files[n]) || 0; });
+      return m;
     });
   };
 
@@ -347,7 +367,7 @@
       });
       var isJson = function (f) { return /\.json$/i.test(f.name); };
       var baseOf = function (name) { return name.replace(/\.json$/i, '').replace(/_\d+\.[^.]+$/, ''); };
-      var stuck = {}, trashed = [], taken = {};
+      var stuck = {}, trashed = [], restored = [], taken = {};
       var moveOne = function (f) {
         var src = (f.parents || []).filter(function (p) { return k.byId[p]; })[0];
         if (!src) { out.failed.push(f.name + '（ギャラリーの外にあるファイルは動かせません）'); return Promise.resolve(false); }
@@ -360,6 +380,7 @@
           return api('files/' + f.id + '?' + qs({ addParents: destId, removeParents: src, fields: 'id', supportsAllDrives: 'true' }), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(function () {
             out.moved++;
             if (dest === 'trash' && !isJson(f)) trashed.push(f.name);
+            if (src === k.trash && dest !== 'trash' && !isJson(f)) restored.push(f.name);
             return true;
           });
         }).catch(function (e) { out.failed.push(f.name + '（' + (e && e.message ? e.message : e) + '）'); return false; });
@@ -368,19 +389,20 @@
       var media = entries.filter(function (f) { return !isJson(f); }), js = entries.filter(isJson);
       return pool(media, 4, function (f) { return moveOne(f).then(function (ok) { if (!ok) stuck[baseOf(f.name)] = true; }); })
         .then(function () { return pool(js.filter(function (f) { return !stuck[baseOf(f.name)]; }), 4, moveOne); })
-        .then(function () { if (trashed.length) return noteTrash(trashed).catch(function () {}); })
+        .then(function () { if (trashed.length || restored.length) return noteTrash(trashed, restored).catch(function () {}); })
         .then(function () { return out; });
     });
   };
 
   // ゴミ箱へ入れた日時を _web/trash.json に記録する（PC のギャラリーが、ゴミ箱をこの順に並べる）
-  function noteTrash(names) {
+  function noteTrash(names, removed) {
     return webFiles(true).then(function (w) {
       var f = w['trash.json'];
       var docP = f ? readText(f.id).then(function (buf) { var d = JSON.parse(dec.decode(buf)); if (!d.files) d.files = {}; return d; }).catch(function () { return { files: {} }; }) : Promise.resolve({ files: {} });
       return docP.then(function (doc) {
         var now = new Date().toISOString();
         names.forEach(function (n) { doc.files[n] = now; });
+        (removed || []).forEach(function (n) { delete doc.files[n]; });
         var text = JSON.stringify(doc);
         if (f) return api(UPLOAD + 'files/' + f.id + '?uploadType=media&supportsAllDrives=true', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: text });
         if (!kidsMem || !kidsMem.web) return;

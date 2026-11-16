@@ -97,6 +97,21 @@ header{position:sticky;top:0;z-index:5;padding:10px 12px;background:var(--bg);bo
 /* PC で開いたとき: マウスで押せる所を分かりやすく、一覧の画像は少し大きく */
 .card{cursor:pointer}
 #helpBtn{flex:none;display:none}
+#selBtn{flex:none}
+.tab.trash{color:#c62828}
+.tab.trash.on{background:#c62828;border-color:#c62828;color:#fff}
+/* 選んでまとめて移動 */
+.card .check{position:absolute;top:5px;left:5px;width:24px;height:24px;border-radius:50%;border:2px solid #fff;background:rgba(0,0,0,.35);color:transparent;font-size:13px;line-height:20px;text-align:center;display:none;pointer-events:none}
+body.selecting .card .check{display:block}
+.card.sel{outline:3px solid var(--accent);outline-offset:-3px}
+.card.sel .check{background:var(--accent);border-color:var(--accent);color:#fff}
+#selbar{position:fixed;left:8px;right:8px;bottom:max(8px, env(safe-area-inset-bottom));z-index:8;display:none;flex-wrap:wrap;gap:6px;align-items:center;justify-content:center;padding:9px 10px;background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.25)}
+body.selecting #selbar{display:flex}
+body.selecting #pagerBottom{padding-bottom:120px}
+#selCount{width:100%;text-align:center;font-size:14px;font-weight:600}
+#selbar button{font:inherit;font-size:14px;padding:8px 11px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
+#selbar button.pri{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
+#selbar button:disabled{opacity:.4}
 /* ログイン・設定の案内 */
 #gate{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;background:var(--bg);padding:16px}
 #gate.open{display:flex}
@@ -160,6 +175,7 @@ header{padding-top:max(10px, env(safe-area-inset-top))}
       <option value="high">高画質</option>
     </select>
     <button id="reload" title="このジャンルを読み直す（新しく保存したものを出す）">↻</button>
+    <button id="selBtn" title="いくつか選んで、まとめて移動・ゴミ箱へ">選ぶ</button>
     <button id="helpBtn" title="キー操作 (?)">?</button>
   </div>
 </header>
@@ -193,6 +209,13 @@ header{padding-top:max(10px, env(safe-area-inset-top))}
   </div>
 </div>
 <div id="gate"><div class="box"><h1>X Gallery</h1><p id="gateText"></p><button id="gateBtn" hidden>Google でログイン</button></div></div>
+<div id="selbar">
+  <span id="selCount"></span>
+  <button id="selPage">このページを全部</button>
+  <button id="selClear">選択を解除</button>
+  <button id="selMove" class="pri">移動…</button>
+  <button id="selDone">終了</button>
+</div>
 <div id="toast"></div>
 <div id="qstat" hidden></div>
 <div id="help">
@@ -363,13 +386,19 @@ function shuffleKey(text) {
   return h >>> 0;
 }
 
+// ---- ゴミ箱のタブ ----
+// ゴミ箱の中では「移動」が「戻す」になり、ゴミ箱へ入れた順（新しい順＝最近入れたもの）に並ぶ。完全に消すのは PC 版だけ
+function inTrash() { return genres.some(function (g) { return g.trash && g.id === current; }); }
+var trashLog = {};
+function trashTime(en) { var m = 0; en.items.forEach(function (it) { m = Math.max(m, trashLog[it.name] || 0); }); return m; }
+
 // ---- ジャンル ----
 function buildTabs() {
   var tabs = $('tabs');
   tabs.innerHTML = '';
   genres.forEach(function (g) {
     var b = document.createElement('button');
-    b.className = 'tab' + (current === g.id ? ' on' : '');
+    b.className = 'tab' + (g.trash ? ' trash' : '') + (current === g.id ? ' on' : '');
     b.textContent = g.name;
     b.onclick = function () { openGenre(g); };
     tabs.appendChild(b);
@@ -421,7 +450,11 @@ function agoText(ms) { var m = Math.round(ms / 60000); return m < 1 ? 'さっき
 var pendingFresh = null; // 拡大表示中に新しい一覧が届いたら、閉じてから入れ替える
 
 function openGenre(g) {
+  if (current !== g.id) setSelecting(false);
   current = g.id;
+  $('vmove').textContent = g.trash ? '戻す' : '移動';
+  $('selMove').textContent = g.trash ? '戻す…' : '移動…';
+  if (g.trash) call('getTrashLog').then(function (m) { trashLog = m || {}; if (current === g.id && items.length) render(true); }).catch(function () {});
   try { localStorage.setItem('xg-genre', g.id); } catch (e) {}
   buildTabs();
   $('tabs').classList.add('fold');
@@ -478,25 +511,30 @@ function idsToMove(list) {
 
 // only を渡したときは、その1枚だけを移す（複数枚の投稿の中の1枚）。渡さないときは投稿まるごと
 var sheetItems = null;
-function openSheet(only) {
-  if (vi < 0) return;
-  var en = view[vi], list = $('sheet-list');
-  sheetItems = only || null;
-  var n = (only || en.items).length;
-  $('sheet-title').textContent = only ? 'この1枚を、どこへ移しますか？' : 'この' + (n > 1 ? n + '点' : '1点') + 'を、どこへ移しますか？';
+var sheetSel = false; // 一覧で選んだものを移すとき
+function openSheet(only, fromSel) {
+  if (!fromSel && vi < 0) return;
+  var list = $('sheet-list'), trash = inTrash(), go = fromSel ? moveSelected : doMove;
+  sheetSel = !!fromSel;
+  sheetItems = fromSel ? null : (only || null);
+  var what;
+  if (fromSel) { var picked = selectedEntries(); what = '選んだ ' + picked.length + ' 件（' + selectedItems().length + ' 点）'; }
+  else { var n = (only || view[vi].items).length; what = only ? 'この1枚' : 'この' + (n > 1 ? n + '点' : '1点'); }
+  $('sheet-title').textContent = what + 'を、' + (trash ? 'どこへ戻しますか？' : 'どこへ移しますか？');
   list.innerHTML = '';
   genres.forEach(function (g) {
-    if (g.id === current) return;
+    if (g.id === current || g.trash) return;
     var b = document.createElement('button');
-    b.textContent = '→ ' + g.name;
-    b.onclick = function () { doMove(g.id, g.name); };
+    b.textContent = (trash ? '↩ ' : '→ ') + g.name + (trash ? ' へ戻す' : '');
+    b.onclick = function () { go(g.id, g.name); };
     list.appendChild(b);
   });
+  if (trash) { $('sheet').classList.add('open'); return; }
   var t = document.createElement('button');
   t.className = 'trash';
   t.textContent = '🗑 ゴミ箱へ（ギャラリーから外す）';
   t.onclick = function () {
-    if (confirm('ゴミ箱へ移します。完全には消えず、PC のギャラリーの「ゴミ箱」から戻せます。\n\n移しますか？')) doMove('trash', 'ゴミ箱');
+    if (confirm('ゴミ箱へ移します。完全には消えず、「ゴミ箱」のタブから戻せます。\n\n移しますか？')) go('trash', 'ゴミ箱');
   };
   list.appendChild(t);
   $('sheet').classList.add('open');
@@ -505,6 +543,66 @@ function closeSheet() { $('sheet').classList.remove('open'); }
 $('sheet-cancel').onclick = closeSheet;
 $('sheet').onclick = function (e) { if (e.target === this) closeSheet(); };
 $('vmove').onclick = function () { openSheet(null); };
+
+// ---- 一覧で選んで、まとめて移動・ゴミ箱へ ----
+// 選んだものは、ファイル ID で覚える（並べ方を変えても、選んだままにする）
+var selecting = false, selFids = {};
+function entrySel(en) { return en.items.every(function (it) { return selFids[it.fid]; }); }
+function selectedEntries() { return view.filter(entrySel); }
+function selectedItems() { return items.filter(function (it) { return selFids[it.fid]; }); }
+function setSelecting(on) {
+  selecting = on;
+  document.body.classList.toggle('selecting', on);
+  $('selBtn').textContent = on ? '終了' : '選ぶ';
+  if (!on) selFids = {};
+  [].forEach.call(document.querySelectorAll('.card.sel'), function (c) { c.classList.remove('sel'); });
+  updateSel();
+}
+function toggleEntry(i, card) {
+  var en = view[i], on = !entrySel(en);
+  en.items.forEach(function (it) { if (on) selFids[it.fid] = true; else delete selFids[it.fid]; });
+  card.classList.toggle('sel', on);
+  updateSel();
+}
+function updateSel() {
+  var n = selectedEntries().length, m = selectedItems().length;
+  $('selCount').textContent = n + ' 件（' + m + ' 点）を選んでいます';
+  $('selMove').disabled = !m;
+}
+$('selBtn').onclick = function () { setSelecting(!selecting); };
+$('selDone').onclick = function () { setSelecting(false); };
+$('selClear').onclick = function () { selFids = {}; [].forEach.call(document.querySelectorAll('.card.sel'), function (c) { c.classList.remove('sel'); }); updateSel(); };
+$('selPage').onclick = function () {
+  var start = pageNo * pageSize, end = Math.min(view.length, start + pageSize);
+  for (var i = start; i < end; i++) view[i].items.forEach(function (it) { selFids[it.fid] = true; });
+  [].forEach.call(document.querySelectorAll('#grid .card'), function (c) { c.classList.add('sel'); });
+  updateSel();
+};
+$('selMove').onclick = function () { if (selectedItems().length) openSheet(null, true); };
+
+// 選んだものを移す。拡大表示からの移動と同じ順番待ちに入れる（1回に 300 ファイルまでに分ける）
+function moveSelected(destId, destName) {
+  var genreId = current, data = cache[genreId], targets = selectedItems(), entries = selectedEntries().length;
+  closeSheet();
+  if (!targets.length) return;
+  var ids = idsToMove(targets), movedFids = {}, movedIds = {};
+  targets.forEach(function (it) { movedFids[it.fid] = true; });
+  ids.forEach(function (id) { movedIds[id] = true; });
+  data.files = data.files.filter(function (f) { return !movedFids[f[1]]; });
+  if (data.jsons) Object.keys(data.jsons).forEach(function (name) { if (movedIds[data.jsons[name]]) delete data.jsons[name]; });
+  items = items.filter(function (it) { return !movedFids[it.fid]; });
+  selFids = {};
+  var keepScroll = window.scrollY;
+  render(true);
+  window.scrollTo(0, keepScroll);
+  updateSel();
+  savedPut(genreId, data);
+  if (destId !== 'trash') savedPut(destId, null);
+  for (var k = 0; k < ids.length; k += 300) moveQueue.push({ ids: ids.slice(k, k + 300), destId: destId, destName: destName, genreId: genreId, n: k ? 0 : entries });
+  saveQueue();
+  runQueue();
+  toast((destId === 'trash' ? 'ゴミ箱へ送ります' : '「' + destName + '」へ' + (inTrash() ? '戻します' : '移します')) + '（' + entries + ' 件）', 2500);
+}
 
 // 移動は「順番待ち」にする。移動先を選んだら、すぐに一覧から外して次のポストへ進み、
 // 実際の移動（Google ドライブ上の操作）は裏で1件ずつ順に行う。待っている間も、次の移動を続けて頼める。
@@ -721,7 +819,8 @@ function render(keepPage) {
     var g = map[k].sort(function (x, y) { return x.time - y.time || x.n - y.n; });
     return { items: g, head: g[0] };
   });
-  var byNew = function (x, y) { return y.head.time - x.head.time || x.head.n - y.head.n; };
+  var byPost = function (x, y) { return y.head.time - x.head.time || x.head.n - y.head.n; };
+  var byNew = inTrash() ? function (x, y) { return trashTime(y) - trashTime(x) || byPost(x, y); } : byPost;
   if (s === 'new') view.sort(byNew);
   else if (s === 'old') view.sort(function (x, y) { return -byNew(x, y); });
   else if (s === 'author') {
@@ -851,7 +950,9 @@ function makeCard(en, i) {
   card.appendChild(img);
   if (it.video) { var p = document.createElement('span'); p.className = 'play'; p.textContent = '▶'; card.appendChild(p); }
   if (en.items.length > 1) { var b = document.createElement('span'); b.className = 'badge'; b.textContent = en.items.length + '枚'; card.appendChild(b); }
-  card.onclick = function () { openView(i); };
+  var check = document.createElement('span'); check.className = 'check'; check.textContent = '✓'; card.appendChild(check);
+  if (selecting && entrySel(en)) card.classList.add('sel');
+  card.onclick = function () { if (selecting) toggleEntry(i, card); else openView(i); };
   return card;
 }
 
@@ -1193,12 +1294,13 @@ document.addEventListener('keydown', function (e) {
     openSheet(e.shiftKey ? oneOrAll() : null);
     var first = $('sheet-list').querySelector('button'); if (first) first.focus();
   }
+  else if (k === 'Delete' && !e.repeat && inTrash()) { e.preventDefault(); toast('ゴミ箱の中のものを完全に消すのは、PC 版からです'); }
   else if (k === 'Delete' && !e.repeat) {
     e.preventDefault();
     sheetItems = e.shiftKey ? oneOrAll() : null;
     var n = (sheetItems || view[vi].items).length;
     doMove('trash', 'ゴミ箱');
-    toast('ゴミ箱へ送りました（' + n + '枚）。PC のギャラリーの「ゴミ箱」から戻せます', 3000);
+    toast('ゴミ箱へ送りました（' + n + '枚）。「ゴミ箱」のタブから戻せます', 3000);
   }
   else if (k === 'z' || k === 'Z') {
     var c = currentImg(), it = currentItem();
