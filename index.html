@@ -1,0 +1,1274 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>X Gallery</title>
+<base target="_blank">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#111214">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="X Gallery">
+<style>
+:root{--bg:#f6f5f2;--fg:#1d1d1f;--muted:#6b6b70;--card:#fff;--line:#e3e1dc;--accent:#1d6fd8;--accent-fg:#fff}
+@media (prefers-color-scheme:dark){:root{--bg:#111214;--fg:#ececec;--muted:#9a9aa0;--card:#1b1c1f;--line:#2c2d31;--accent:#6aa8ff;--accent-fg:#0b1220}}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,"Noto Sans JP","Yu Gothic UI",sans-serif;-webkit-text-size-adjust:100%}
+header{position:sticky;top:0;z-index:5;padding:10px 12px;background:var(--bg);border-bottom:1px solid var(--line)}
+#tabs{display:flex;flex-wrap:wrap;gap:6px}
+#tabs.fold{max-height:76px;overflow:hidden}
+.tab{font:inherit;font-size:14px;padding:6px 11px;border:1px solid var(--line);border-radius:999px;background:var(--card);color:var(--fg)}
+.tab.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+#more-tabs{margin-top:6px;font:inherit;font-size:13px;border:0;background:none;color:var(--accent);padding:2px 0}
+.tools{display:flex;gap:6px;margin-top:8px}
+.tools select,.tools input,.tools button{font:inherit;font-size:14px;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);min-width:0}
+#author{flex:2}#sort{flex:1}#q{flex:2}
+#group{flex:1}#pageSize{flex:1}#quality{flex:1}#reload{flex:none}
+#status{display:flex;align-items:center;gap:8px;padding:8px 12px 0;color:var(--muted);font-size:13px}
+/* 読み込み中の表示 */
+.spin{flex:none;width:16px;height:16px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--accent);animation:spin .9s linear infinite}
+.spin.big{width:34px;height:34px;border-width:3px}
+@keyframes spin{to{transform:rotate(360deg)}}
+#loading{grid-column:1/-1;display:flex;flex-direction:column;align-items:center;gap:12px;margin:14vh auto;color:var(--muted);font-size:14px;text-align:center;padding:0 16px;white-space:pre-line}
+/* ページ送り（一覧の上と下） */
+.pager{display:flex;flex-wrap:wrap;gap:5px;align-items:center;justify-content:center;padding:8px 12px 0}
+.pager[hidden]{display:none}
+.pager button,.pager select{font:inherit;font-size:14px;min-width:36px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg)}
+.pager button.cur{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);font-weight:600}
+.pager button:disabled{opacity:.4}
+.pager .info{width:100%;text-align:center;color:var(--muted);font-size:12px}
+#pagerBottom{padding-bottom:30px}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px;padding:10px 12px}
+.card{position:relative;background:var(--card);border-radius:8px;overflow:hidden;aspect-ratio:1}
+.card img{display:block;width:100%;height:100%;object-fit:cover;background:var(--line)}
+.badge{position:absolute;top:4px;right:4px;padding:2px 7px;border-radius:999px;background:rgba(0,0,0,.72);color:#fff;font-size:11px}
+.play{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:36px;height:36px;border-radius:50%;background:rgba(0,0,0,.6);color:#fff;display:grid;place-items:center;font-size:14px}
+/* 拡大表示で、いま何枚目を見ているか（上の真ん中） */
+#vpage{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:12;padding:5px 13px;border-radius:999px;background:rgba(30,30,30,.82);color:#fff;font-size:14px;font-weight:600;pointer-events:none;white-space:nowrap}
+#vpage:empty{display:none}
+#empty{grid-column:1/-1;margin:14vh auto;color:var(--muted);text-align:center;line-height:1.9;padding:0 16px}
+#view{position:fixed;inset:0;z-index:10;display:none;flex-direction:column;background:#000;color:#eee}
+#view.open{display:flex}
+#vbody{flex:1;overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+#vbody img{display:block;margin:0 auto 4px;background:#181818;min-height:80px}
+/* 画面に収める（標準）: 1枚が、上下のバーを除いた画面の中に全部入る大きさ */
+/* 高さの上限は、実際の表示領域を測った値（--vh）を使う。埋め込みの中では 100vh が画面の高さと合わないことがある */
+#view.fit #vbody img{width:auto;height:auto;max-width:100%;max-height:calc(100vh - 58px);max-height:var(--vh, calc(100dvh - 58px))}
+#vbody img.zoomable{cursor:zoom-in}
+/* 大きい画像が届くまでの小さい画像は、届いたあとと同じくらいの大きさに引き伸ばして出す */
+#vbody img.lowres{width:100%;object-fit:contain;filter:blur(1.5px)}
+#view.fit #vbody img.lowres{max-height:calc(100vh - 58px);max-height:var(--vh, calc(100dvh - 58px))}
+/* タップで原寸: 画面いっぱいに重ねて、指で上下左右に動かして見る */
+#zoom{position:fixed;inset:0;z-index:15;display:none;overflow:auto;background:#000;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+#zoom.open{display:block}
+#zimg{display:block;max-width:none;cursor:zoom-out}
+#zclose{position:fixed;top:10px;right:10px;z-index:16;font:inherit;font-size:16px;padding:8px 13px;border:0;border-radius:999px;background:rgba(40,40,40,.85);color:#fff}
+#zinfo{position:fixed;left:10px;bottom:10px;z-index:16;padding:6px 11px;border-radius:999px;background:rgba(40,40,40,.85);color:#ddd;font-size:12px;pointer-events:none}
+/* 幅に合わせる: 横幅いっぱいにして、縦はスクロールで読む（漫画向け） */
+#view.wide #vbody img{width:100%;height:auto}
+/* 移動先を選ぶ画面（下から出る一覧） */
+#sheet{position:fixed;inset:0;z-index:20;display:none;align-items:flex-end;background:rgba(0,0,0,.55)}
+#sheet.open{display:flex}
+#sheet-box{width:100%;max-height:78vh;display:flex;flex-direction:column;background:var(--card);color:var(--fg);border-radius:14px 14px 0 0;padding:12px 12px 14px}
+#sheet-title{font-size:14px;color:var(--muted);padding:2px 4px 10px}
+#sheet-list{overflow:auto;display:flex;flex-direction:column;gap:6px}
+#sheet-list button,#sheet-cancel{font:inherit;font-size:16px;text-align:left;padding:13px 14px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg)}
+#sheet-list button.trash{color:#c62828}
+#sheet-cancel{margin-top:10px;text-align:center}
+#toast{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:30;display:none;max-width:92vw;padding:10px 16px;border-radius:10px;background:#fff;color:#111;font-size:14px;box-shadow:0 4px 18px rgba(0,0,0,.35)}
+/* 移動の順番待ちの表示（拡大表示の上にも、一覧の上にも出る） */
+#qstat{position:fixed;left:10px;top:10px;z-index:25;padding:6px 12px;border-radius:999px;background:#1d6fd8;color:#fff;font-size:13px;box-shadow:0 2px 10px rgba(0,0,0,.3);pointer-events:none}
+#qstat[hidden]{display:none}
+#vhint{position:absolute;left:50%;bottom:70px;transform:translateX(-50%);padding:8px 14px;border-radius:999px;background:rgba(255,255,255,.16);color:#fff;font-size:13px;white-space:nowrap;pointer-events:none}
+.ptext{padding:12px 14px;font-size:15px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}
+.ptext .when{display:block;color:#9a9a9a;font-size:12px;margin-bottom:4px}
+.ptext a,.vlink{color:#8fc1ff}
+.vlink{display:block;padding:10px 14px;font-size:14px}
+#vbar{display:flex;gap:5px;align-items:center;padding:7px 8px;border-top:1px solid #222;font-size:13px}
+#vbar button,#vbar a{flex:none;font:inherit;font-size:14px;padding:9px 10px;border:0;border-radius:8px;background:#2a2a2a;color:#fff;text-decoration:none;white-space:nowrap}
+#vbar .nav{font-size:18px;padding:7px 16px}
+#vbar button:disabled{opacity:.35}
+/* 件数の表示は、残った幅に収める（狭い画面でもボタンがはみ出さないように） */
+#vpos{flex:1;min-width:0;text-align:center;color:#aaa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* PC で開いたとき: マウスで押せる所を分かりやすく、一覧の画像は少し大きく */
+.card{cursor:pointer}
+#helpBtn{flex:none;display:none}
+/* ログイン・設定の案内 */
+#gate{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;background:var(--bg);padding:16px}
+#gate.open{display:flex}
+#gate .box{max-width:420px;width:100%;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 20px;text-align:center;line-height:1.8}
+#gate h1{margin:0 0 6px;font-size:20px}
+#gate p{margin:8px 0;color:var(--muted);font-size:14px;white-space:pre-line}
+#gate button{margin-top:12px;font:inherit;font-size:16px;padding:11px 20px;border:0;border-radius:10px;background:var(--accent);color:var(--accent-fg)}
+header{padding-top:max(10px, env(safe-area-inset-top))}
+#vbar{padding-bottom:max(7px, env(safe-area-inset-bottom))}
+@media (hover:hover) and (pointer:fine){
+  #helpBtn{display:block}
+  #vbar button:hover,.pager button:not(:disabled):hover{filter:brightness(1.25)}
+  #sheet-list button:focus{outline:2px solid var(--accent)}
+}
+@media (min-width:900px){
+  #grid{grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px}
+  #sheet-box{max-width:520px;margin:0 auto;border-radius:14px;margin-bottom:8vh}
+}
+/* キー操作の一覧 */
+#help{position:fixed;inset:0;z-index:40;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.6);padding:16px}
+#help.open{display:flex}
+#help .box{max-width:640px;width:100%;max-height:86vh;overflow:auto;background:var(--card);color:var(--fg);border-radius:12px;padding:16px 20px;font-size:14px}
+#help h2{margin:0 0 8px;font-size:17px}
+#help h3{margin:14px 0 4px;font-size:14px;color:var(--muted)}
+#help table{border-collapse:collapse;width:100%}
+#help td{padding:5px 6px;border-top:1px solid var(--line);vertical-align:top}
+#help td:first-child{white-space:nowrap;width:1%;padding-right:14px}
+#help kbd{display:inline-block;padding:1px 6px;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;background:var(--bg);font:inherit;font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <div id="tabs" class="fold"></div>
+  <button id="more-tabs" hidden>ジャンルをすべて表示 ▾</button>
+  <div class="tools">
+    <select id="author"><option value="">すべての作者</option></select>
+    <input id="q" type="search" placeholder="検索">
+  </div>
+  <div class="tools">
+    <select id="sort">
+      <option value="new">新しい順</option>
+      <option value="old">古い順</option>
+      <option value="author">作者順</option>
+      <option value="random">ランダム</option>
+    </select>
+    <select id="group" title="まとめ方">
+      <option value="thread">スレッドごと</option>
+      <option value="post">ポストごと</option>
+      <option value="none">1枚ずつ</option>
+    </select>
+    <select id="pageSize" title="1ページに出す数">
+      <option value="30">30件</option>
+      <option value="50">50件</option>
+      <option value="100">100件</option>
+      <option value="150">150件</option>
+      <option value="200">200件</option>
+    </select>
+    <select id="quality" title="画質（通信量）">
+      <option value="auto">画質:自動</option>
+      <option value="saver">節約</option>
+      <option value="high">高画質</option>
+    </select>
+    <button id="reload" title="このジャンルを読み直す（新しく保存したものを出す）">↻</button>
+    <button id="helpBtn" title="キー操作 (?)">?</button>
+  </div>
+</header>
+<div id="status"></div>
+<div class="pager" id="pagerTop" hidden></div>
+<div id="grid"><div id="loading"><div class="spin big"></div><div>読み込んでいます…</div></div></div>
+<div class="pager" id="pagerBottom" hidden></div>
+<div id="view">
+  <div id="vpage"></div>
+  <div id="vbody"></div>
+  <div id="vhint" hidden>タップで原寸 ・ 左右スワイプで前後へ</div>
+  <div id="vbar">
+    <button id="vprev" class="nav">‹</button>
+    <button id="vfit" title="画面に収める／幅に合わせる"></button>
+    <span id="vpos"></span>
+    <button id="vmove">移動</button>
+    <button id="vclose">✕</button>
+    <button id="vnext" class="nav">›</button>
+  </div>
+</div>
+<div id="zoom">
+  <img id="zimg" alt="">
+  <button id="zclose">✕ 戻る</button>
+  <div id="zinfo"></div>
+</div>
+<div id="sheet">
+  <div id="sheet-box">
+    <div id="sheet-title"></div>
+    <div id="sheet-list"></div>
+    <button id="sheet-cancel">やめる</button>
+  </div>
+</div>
+<div id="gate"><div class="box"><h1>X Gallery</h1><p id="gateText"></p><button id="gateBtn" hidden>Google でログイン</button></div></div>
+<div id="toast"></div>
+<div id="qstat" hidden></div>
+<div id="help">
+  <div class="box">
+    <h2>キー操作（PC で開いたとき）</h2>
+    <h3>一覧</h3>
+    <table>
+      <tr><td>クリック</td><td>拡大して見る</td></tr>
+      <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>前・次のページ</td></tr>
+      <tr><td><kbd>/</kbd></td><td>検索欄へ</td></tr>
+      <tr><td><kbd>R</kbd></td><td>このジャンルを読み直す</td></tr>
+    </table>
+    <h3>拡大表示</h3>
+    <table>
+      <tr><td><kbd>PageDown</kbd> <kbd>↓</kbd> <kbd>Space</kbd></td><td>次のページ。最後のページで一度止まり、もう一度押すと次の投稿へ</td></tr>
+      <tr><td><kbd>PageUp</kbd> <kbd>↑</kbd> <kbd>Shift</kbd>+<kbd>Space</kbd></td><td>前のページ。最初のページで一度止まり、もう一度押すと前の投稿へ</td></tr>
+      <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>前・次の投稿へすぐ移る</td></tr>
+      <tr><td><kbd>F</kbd></td><td>「画面に収める」と「幅に合わせる」の切り替え</td></tr>
+      <tr><td><kbd>M</kbd></td><td>移動先を選ぶ（<kbd>↑</kbd><kbd>↓</kbd> で選んで <kbd>Enter</kbd>、または数字キー）</td></tr>
+      <tr><td><kbd>Shift</kbd>+<kbd>M</kbd></td><td>いま見ている1枚だけの移動先を選ぶ</td></tr>
+      <tr><td><kbd>Delete</kbd></td><td>この投稿をゴミ箱へ</td></tr>
+      <tr><td><kbd>Shift</kbd>+<kbd>Delete</kbd></td><td>いま見ている1枚だけをゴミ箱へ</td></tr>
+      <tr><td><kbd>Z</kbd> ・ 画像をクリック</td><td>原寸で見る（もう一度押すと戻る）</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>閉じる</td></tr>
+    </table>
+    <h3>どこでも</h3>
+    <table><tr><td><kbd>?</kbd></td><td>この一覧を出す・閉じる</td></tr></table>
+  </div>
+</div>
+<script src="config.js"></script>
+<script src="drive.js"></script>
+<script>
+// X Gallery スマホ用の閲覧ページ（ホーム画面に置ける版）。drive.js で Google ドライブから直接ジャンルと中身を受け取って並べる。
+var RE = /^(.+)_(\d{6,})_(\d+)\.(jpe?g|png|webp|gif|avif|mp4|webm|mov)$/i;
+var VIDEO = /\.(mp4|webm|mov)$/i;
+var EPOCH = 1288834974657; // X のポスト ID に埋め込まれた時刻の基準
+var $ = function (id) { return document.getElementById(id); };
+var genres = [], cache = {}, current = null, items = [], view = [], vi = -1;
+var seed = Math.floor(Math.random() * 4294967296);
+// 一覧はページに分けて出す（PC のギャラリーと同じ）。1ページの数とまとめ方は前回の選択を覚える
+var PAGE_SIZES = [30, 50, 100, 150, 200], pageSize = 50, pageNo = 0;
+try {
+  var savedSize = +localStorage.getItem('xg-page-size'); if (PAGE_SIZES.indexOf(savedSize) >= 0) pageSize = savedSize;
+  var savedGroup = localStorage.getItem('xg-group'); if (['thread', 'post', 'none'].indexOf(savedGroup) >= 0) document.getElementById('group').value = savedGroup;
+} catch (e) {}
+document.getElementById('pageSize').value = String(pageSize);
+
+// 上の件数の欄。loading のときは回る印を付ける
+function setStatus(text, loading) {
+  var s = document.getElementById('status');
+  s.innerHTML = '';
+  if (loading) { var sp = document.createElement('span'); sp.className = 'spin'; s.appendChild(sp); }
+  s.appendChild(document.createTextNode(text));
+}
+// 一覧の場所に「読み込んでいます」を大きく出す
+function showLoading(text) {
+  var grid = document.getElementById('grid');
+  grid.innerHTML = '<div id="loading"><div class="spin big"></div><div></div></div>';
+  grid.querySelector('#loading div:last-child').textContent = text;
+  document.getElementById('pagerTop').hidden = document.getElementById('pagerBottom').hidden = true;
+}
+
+// ドライブとのやりとり（drive.js）を Promise で呼ぶ。Apps Script 版と同じ名前・同じ結果の形
+function call(name) {
+  var args = Array.prototype.slice.call(arguments, 1);
+  try { return Promise.resolve(XG[name].apply(null, args)); } catch (e) { return Promise.reject(e); }
+}
+
+// X のポスト ID から投稿時刻を出す（ID の上位ビットが時刻。大きな数なので文字列のまま割り算する）
+function snowflakeTime(id) {
+  var n = 0;
+  for (var i = 0; i < id.length; i++) n = n * 10 + (id.charCodeAt(i) - 48);
+  return Math.floor(n / 4194304) + EPOCH; // 数ミリ秒の誤差は並び順に影響しない
+}
+
+// ---- 画質（通信量） ----
+// 自動: モバイル回線（または端末の「データセーバー」）のときは節約にする。
+// 節約: 一覧の画像を小さく、拡大表示も控えめな大きさにして、次の投稿の先読みをしない。
+var quality = 'auto';
+try { var q0 = localStorage.getItem('xg-quality'); if (['auto', 'saver', 'high'].indexOf(q0) >= 0) quality = q0; } catch (e) {}
+document.getElementById('quality').value = quality;
+function saving() {
+  if (quality === 'saver') return true;
+  if (quality === 'high') return false;
+  var c = navigator.connection;
+  return !!(c && (c.saveData || c.type === 'cellular' || /(^|-)(2g|3g)$/.test(c.effectiveType || '')));
+}
+// 一覧の画像は、ドライブがあらかじめ作っている 220px を使う（ほかの大きさは、頼むたびにドライブが縮めるので待ちが出る）。
+// 「高画質」を選んだときだけ 320px にする
+function gridSize() { return quality === 'high' ? 320 : 220; }
+
+var swOn = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
+function thumb(it, size) {
+  // size が 0 のときは「元の大きさ」（大きいので端末には取っておかない）
+  if (it.t) {
+    var url = it.t.replace(/=s\d+(-[a-z0-9-]+)?$/i, '=s' + size);
+    if (swOn && size) return 't/' + it.fid + '/' + size + '?u=' + encodeURIComponent(url);
+    return url;
+  }
+  return 'https://drive.google.com/thumbnail?id=' + it.fid + '&sz=w' + (size || 4000);
+}
+
+function parseItem(f, metas) {
+  var name = f[0], m = name.match(RE);
+  var it = { name: name, fid: f[1], t: f[2] === undefined ? undefined : f[2], video: VIDEO.test(name), author: null, id: null, n: 0, time: 0, url: null, meta: null, source: 'x' };
+  if (!m) return it;
+  it.n = +m[3];
+  if (/^px-\d+$/.test(m[1])) {
+    var pid = m[2].replace(/^0+/, '') || '0';
+    it.source = 'pixiv'; it.author = m[1]; it.id = 'px' + pid; it.url = 'https://www.pixiv.net/artworks/' + pid;
+  } else {
+    it.author = m[1]; it.id = m[2]; it.time = snowflakeTime(m[2]); it.url = 'https://x.com/' + m[1] + '/status/' + m[2];
+  }
+  it.meta = metas[it.id] || null;
+  if (it.source === 'pixiv' && it.meta && it.meta.created_at) { var d = Date.parse(it.meta.created_at); if (!isNaN(d)) it.time = d; }
+  return it;
+}
+
+// 数えるときの「投稿」の単位。X のポスト・pixiv の作品が1つ。出典の分からないファイルは1枚で1つ
+function postKey(it) { return it.id || 'f:' + it.name; }
+function countPosts(list) { var s = {}, n = 0; list.forEach(function (it) { var k = postKey(it); if (!s[k]) { s[k] = true; n++; } }); return n; }
+
+var pxNames = {};
+function authorLabel(it) {
+  if (!it.author) return '出典不明';
+  if (it.source !== 'pixiv') return '@' + it.author;
+  return ((it.meta && it.meta.name) || pxNames[it.author] || ('作者 ' + it.author.slice(3))) + '（pixiv）';
+}
+
+// ---- 作者のまとまり（X と pixiv の同じ人を1人として扱う。PC のギャラリーと同じ考え方） ----
+// 作者のキーは、X は「x:アカウント（小文字）」、pixiv は「px-作者ID」。_web/authors.json の対応で同じ人をまとめる
+var authorsDoc = { pixiv: {}, links: [], unlinks: [] }, personOf = {}, personLabel = {};
+function akey(author) { return !author ? '__none' : author.indexOf('px-') === 0 ? author : 'x:' + author.toLowerCase(); }
+function pkey(it) { var k = akey(it.author); return personOf[k] || k; }
+function buildPersons() {
+  var parent = {}, present = {}, sample = {};
+  var find = function (k) { while (parent[k] && parent[k] !== k) k = parent[k]; return k; };
+  var join = function (a, b) { if (!parent[a]) parent[a] = a; if (!parent[b]) parent[b] = b; var ra = find(a), rb = find(b); if (ra !== rb) parent[rb] = ra; };
+  items.forEach(function (it) {
+    var k = akey(it.author); present[k] = true;
+    if (!sample[k] || (it.meta && it.meta.name && !(sample[k].meta && sample[k].meta.name))) sample[k] = it;
+  });
+  var unlinks = {}; (authorsDoc.unlinks || []).forEach(function (k) { unlinks[k] = true; });
+  Object.keys(authorsDoc.pixiv || {}).forEach(function (px) {
+    var xk = 'x:' + String(authorsDoc.pixiv[px]).toLowerCase();
+    if (!unlinks[px] && present[px] && present[xk]) join(xk, px);
+  });
+  (authorsDoc.links || []).forEach(function (pair) { if (pair && pair.length === 2 && present[pair[0]] && present[pair[1]]) join(pair[0], pair[1]); });
+  personOf = {}; personLabel = {};
+  var members = {};
+  Object.keys(present).forEach(function (k) { var r = parent[k] ? find(k) : k; personOf[k] = r; (members[r] = members[r] || []).push(k); });
+  Object.keys(members).forEach(function (r) {
+    var ms = members[r];
+    if (ms.length === 1) { personLabel[r] = r === '__none' ? '出典不明' : authorLabel(sample[ms[0]]); return; }
+    var xs = ms.filter(function (k) { return k.indexOf('x:') === 0; }).map(function (k) { return sample[k]; });
+    var pxs = ms.filter(function (k) { return k.indexOf('px-') === 0; }).map(function (k) { return sample[k]; });
+    var name = '';
+    xs.concat(pxs).some(function (s) { name = (s.meta && s.meta.name) || pxNames[s.author] || ''; return !!name; });
+    var parts = xs.map(function (s) { return '@' + s.author; }).concat(pxs.length ? ['pixiv'] : []);
+    personLabel[r] = name ? name + '（' + parts.join(' ・ ') + '）' : parts.join(' ・ ');
+  });
+}
+
+function shuffleKey(text) {
+  var h = (2166136261 ^ seed) >>> 0;
+  for (var i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  h ^= h >>> 15; h = Math.imul(h, 2246822507) >>> 0; h ^= h >>> 13;
+  return h >>> 0;
+}
+
+// ---- ジャンル ----
+function buildTabs() {
+  var tabs = $('tabs');
+  tabs.innerHTML = '';
+  genres.forEach(function (g) {
+    var b = document.createElement('button');
+    b.className = 'tab' + (current === g.id ? ' on' : '');
+    b.textContent = g.name;
+    b.onclick = function () { openGenre(g); };
+    tabs.appendChild(b);
+  });
+  $('more-tabs').hidden = tabs.scrollHeight <= 80;
+}
+$('more-tabs').onclick = function () {
+  var folded = $('tabs').classList.toggle('fold');
+  this.textContent = folded ? 'ジャンルをすべて表示 ▾' : 'たたむ ▴';
+};
+
+// ---- 一覧をスマホに保存しておく（外の回線で、開くたびに一覧を受け取らないように） ----
+// ジャンルの一覧（ファイル名・ID・本文など）を端末の中（IndexedDB）に保存し、次からはそれをすぐ出す。
+// 保存して 30 分以内ならサーバーに取りに行かない。過ぎていれば、保存したものを出しつつ裏で取り直して入れ替える。
+// サムネイルの URL は時間がたつと使えなくなるので保存しない。
+var FRESH_MS = 30 * 60 * 1000;
+var idbP = null;
+function idb() {
+  if (!idbP) idbP = new Promise(function (res) {
+    try {
+      var r = indexedDB.open('xg-phone', 1);
+      r.onupgradeneeded = function () { r.result.createObjectStore('genres'); };
+      r.onsuccess = function () { res(r.result); };
+      r.onerror = function () { res(null); };
+    } catch (e) { res(null); }
+  });
+  return idbP;
+}
+function savedGet(id) {
+  return idb().then(function (db) {
+    if (!db) return null;
+    return new Promise(function (res) {
+      try { var q = db.transaction('genres').objectStore('genres').get(id); q.onsuccess = function () { res(q.result || null); }; q.onerror = function () { res(null); }; } catch (e) { res(null); }
+    });
+  });
+}
+function savedPut(id, data) {
+  idb().then(function (db) {
+    if (!db) return;
+    try {
+      var copy = data ? { files: data.files, metas: data.metas, jsons: data.jsons } : null;
+      var st = db.transaction('genres', 'readwrite').objectStore('genres');
+      if (copy) st.put({ at: Date.now(), data: copy }, id); else st.delete(id);
+    } catch (e) {}
+  });
+}
+function agoText(ms) { var m = Math.round(ms / 60000); return m < 1 ? 'さっき' : m < 60 ? m + '分前' : Math.round(m / 60) + '時間前'; }
+
+var pendingFresh = null; // 拡大表示中に新しい一覧が届いたら、閉じてから入れ替える
+
+function openGenre(g) {
+  current = g.id;
+  try { localStorage.setItem('xg-genre', g.id); } catch (e) {}
+  buildTabs();
+  $('tabs').classList.add('fold');
+  $('more-tabs').textContent = 'ジャンルをすべて表示 ▾';
+  if (cache[g.id]) return show(g, cache[g.id]);
+  setStatus('「' + g.name + '」を読み込んでいます…', true);
+  showLoading('「' + g.name + '」を読み込んでいます…' + String.fromCharCode(10) + '点数が多いと十数秒かかります');
+  savedGet(g.id).then(function (saved) {
+    var shown = false;
+    if (saved && saved.data && current === g.id && !cache[g.id]) {
+      cache[g.id] = saved.data;
+      show(g, saved.data);
+      shown = true;
+      if (Date.now() - saved.at < FRESH_MS) { setStatus($('status').textContent + '（' + agoText(Date.now() - saved.at) + 'の一覧 ・ ↻で最新に）'); return; }
+    }
+    return call('getGenre', g.id).then(function (data) {
+      savedPut(g.id, data);
+      if (current !== g.id) { cache[g.id] = data; return; }
+      if (shown) data.thumbs = cache[g.id].thumbs; // すでに取ったサムネイルの URL は引き継ぐ
+      cache[g.id] = data;
+      if (vi >= 0) pendingFresh = g; else show(g, data);
+    });
+  }).catch(function (e) {
+    if (cache[g.id]) return; // 保存した一覧を出せていれば、そのまま使う
+    setStatus('読み込めませんでした: ' + (e && e.message ? e.message : e)); showLoading('読み込めませんでした');
+  });
+}
+
+// ---- 移動（別のジャンルへ／ゴミ箱へ） ----
+// 拡大表示しているポスト（スレッド）を丸ごと、Google ドライブ上で別のジャンルのフォルダへ移す。
+// 「ゴミ箱へ」は PC のギャラリーと同じ「ゴミ箱」フォルダへの移動で、完全には消さない（PC から戻せる）。
+function toast(text, ms) {
+  var t = $('toast');
+  t.textContent = text;
+  t.style.display = 'block';
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(function () { t.style.display = 'none'; }, ms || 3500);
+}
+
+// 移すファイルの ID を集める。画像・動画に加えて、そのポストの画像がこのジャンルに1つも残らなくなるなら情報ファイルも
+function idsToMove(list) {
+  var data = cache[current], moving = {}, ids = [];
+  list.forEach(function (it) { moving[it.fid] = true; ids.push(it.fid); });
+  var done = {};
+  list.forEach(function (it) {
+    if (!it.id || done[it.id]) return;
+    done[it.id] = true;
+    var stays = items.some(function (x) { return x.id === it.id && !moving[x.fid]; });
+    var jsonName = it.name.replace(/_\d+\.[^.]+$/, '.json');
+    if (!stays && data.jsons && data.jsons[jsonName]) ids.push(data.jsons[jsonName]);
+  });
+  return ids;
+}
+
+// only を渡したときは、その1枚だけを移す（複数枚の投稿の中の1枚）。渡さないときは投稿まるごと
+var sheetItems = null;
+function openSheet(only) {
+  if (vi < 0) return;
+  var en = view[vi], list = $('sheet-list');
+  sheetItems = only || null;
+  var n = (only || en.items).length;
+  $('sheet-title').textContent = only ? 'この1枚を、どこへ移しますか？' : 'この' + (n > 1 ? n + '点' : '1点') + 'を、どこへ移しますか？';
+  list.innerHTML = '';
+  genres.forEach(function (g) {
+    if (g.id === current) return;
+    var b = document.createElement('button');
+    b.textContent = '→ ' + g.name;
+    b.onclick = function () { doMove(g.id, g.name); };
+    list.appendChild(b);
+  });
+  var t = document.createElement('button');
+  t.className = 'trash';
+  t.textContent = '🗑 ゴミ箱へ（ギャラリーから外す）';
+  t.onclick = function () {
+    if (confirm('ゴミ箱へ移します。完全には消えず、PC のギャラリーの「ゴミ箱」から戻せます。\n\n移しますか？')) doMove('trash', 'ゴミ箱');
+  };
+  list.appendChild(t);
+  $('sheet').classList.add('open');
+}
+function closeSheet() { $('sheet').classList.remove('open'); }
+$('sheet-cancel').onclick = closeSheet;
+$('sheet').onclick = function (e) { if (e.target === this) closeSheet(); };
+$('vmove').onclick = function () { openSheet(null); };
+
+// 移動は「順番待ち」にする。移動先を選んだら、すぐに一覧から外して次のポストへ進み、
+// 実際の移動（Google ドライブ上の操作）は裏で1件ずつ順に行う。待っている間も、次の移動を続けて頼める。
+var moveQueue = [], moveRunning = false, moveProblems = [], moveDone = 0, needReload = {}, runningJob = null;
+
+// まだ終わっていない移動を端末に記録しておく。途中で画面を閉じても、次に開いたときに続きを行う。
+// 同じ移動をもう一度頼んでも、すでに移動先にあるファイルは動かさないので、二重には移らない
+function saveQueue() {
+  try {
+    var pending = (runningJob ? [runningJob] : []).concat(moveQueue).map(function (j) { return { ids: j.ids, destId: j.destId, destName: j.destName, genreId: j.genreId, n: j.n || 1 }; });
+    if (pending.length) localStorage.setItem('xg-move-queue', JSON.stringify(pending)); else localStorage.removeItem('xg-move-queue');
+  } catch (e) {}
+}
+function resumeQueue() {
+  var pending = [];
+  try { pending = JSON.parse(localStorage.getItem('xg-move-queue') || '[]'); } catch (e) {}
+  if (!pending.length) return;
+  pending.forEach(function (j) { moveQueue.push(j); needReload[j.genreId] = true; if (j.destId !== 'trash') needReload[j.destId] = true; });
+  toast('前回、途中で閉じた移動の続きを行っています（' + pending.length + ' 件）', 6000);
+  runQueue();
+}
+
+function updateQueueStatus() {
+  var n = moveQueue.length + (moveRunning ? 1 : 0), q = $('qstat');
+  q.hidden = n === 0;
+  q.textContent = '移動中… あと ' + n + ' 件';
+}
+// 順番待ちが残っているときにページを閉じようとしたら、知らせる（閉じると、残りは移動されない）
+window.addEventListener('beforeunload', function (e) {
+  if (XG.leaving) return; // Google のログインへ移るとき（順番待ちは記録してあり、戻ってから続ける）
+  if (moveQueue.length || moveRunning) { e.preventDefault(); e.returnValue = ''; }
+});
+
+function doMove(destId, destName) {
+  if (vi < 0) return;
+  var en = view[vi], genreId = current, data = cache[genreId];
+  var targets = sheetItems || en.items;
+  var rest = en.items.filter(function (it) { return targets.indexOf(it) < 0; });
+  // 1枚だけ移すときは、同じ投稿を開いたまま、その次の1枚のあたりに留まる
+  var pos = en.items.indexOf(targets[0]);
+  var stay = rest.filter(function (it) { return en.items.indexOf(it) >= pos; })[0] || rest[rest.length - 1];
+  var ids = idsToMove(targets), movedFids = {}, movedIds = {};
+  targets.forEach(function (it) { movedFids[it.fid] = true; });
+  ids.forEach(function (id) { movedIds[id] = true; });
+  closeSheet();
+
+  // 先に画面の一覧から外して、同じ位置の次のポストを開く
+  data.files = data.files.filter(function (f) { return !movedFids[f[1]]; });
+  if (data.jsons) Object.keys(data.jsons).forEach(function (name) { if (movedIds[data.jsons[name]]) delete data.jsons[name]; });
+  items = items.filter(function (it) { return !movedFids[it.fid]; });
+  var at = vi, keepScroll = window.scrollY;
+  render(true);
+  window.scrollTo(0, keepScroll);
+  if (stay) {
+    var ni = -1;
+    view.some(function (x, k) { if (x.items.some(function (it) { return it.fid === stay.fid; })) { ni = k; return true; } return false; });
+    openView(ni >= 0 ? ni : Math.min(at, view.length - 1));
+    setTimeout(function () {
+      var img = $('vbody').querySelector('img[data-fid="' + stay.fid + '"]');
+      if (img) { $('vbody').scrollTop = Math.max(0, img.offsetTop - 8); updatePageBadge(); }
+    }, 30);
+    toast((destId === 'trash' ? 'ゴミ箱へ送りました' : '「' + destName + '」へ移しました') + '（1枚）', 2500);
+  } else if (view.length) openView(Math.min(at, view.length - 1)); else closeView();
+  sheetItems = null;
+
+  savedPut(genreId, data);
+  if (destId !== 'trash') savedPut(destId, null);
+  moveQueue.push({ ids: ids, destId: destId, destName: destName, genreId: genreId, n: 1 });
+  saveQueue();
+  runQueue();
+}
+
+function runQueue() {
+  updateQueueStatus();
+  if (moveRunning) return;
+  var job = moveQueue.shift();
+  if (!job) return finishQueue();
+  // 順番待ちのうち、移動元と移動先が同じものは、まとめて1回で頼む（1回ごとの待ちを減らす。1回に 300 ファイルまで）
+  job = { ids: job.ids.slice(), destId: job.destId, destName: job.destName, genreId: job.genreId, n: job.n || 1 };
+  while (moveQueue.length && moveQueue[0].destId === job.destId && moveQueue[0].genreId === job.genreId && job.ids.length + moveQueue[0].ids.length <= 300) {
+    var next = moveQueue.shift();
+    job.ids = job.ids.concat(next.ids); job.n += next.n || 1;
+  }
+  runningJob = job;
+  saveQueue();
+  moveRunning = true;
+  updateQueueStatus();
+  call('moveItems', job.ids, job.destId).then(function (r) {
+    var skipped = r.skipped || [], failed = r.failed || [];
+    if (failed.length) {
+      var why = failed[0];
+      moveProblems.push('移せませんでした: ' + why + (/権限|拒否|アクセス|permission|access|denied/i.test(why) ? '　※このアカウントには編集の権限が必要です（フォルダの共有を「編集者」にしてください）' : ''));
+      needReload[job.genreId] = true;
+    } else if (skipped.length) {
+      moveProblems.push('「' + job.destName + '」に同じ名前のファイルがあるため、' + skipped.length + ' 個は移しませんでした');
+      needReload[job.genreId] = true;
+    } else moveDone += job.n;
+    // 移動先のジャンルは、次に開いたときに読み直す（いま開いているなら、順番待ちが終わってから読み直す）
+    if (job.destId !== 'trash') { if (current === job.destId) needReload[job.destId] = true; else delete cache[job.destId]; }
+  }).catch(function (e) {
+    moveProblems.push('移せませんでした: ' + (e && e.message ? e.message : e));
+    needReload[job.genreId] = true;
+  }).then(function () {
+    moveRunning = false;
+    runningJob = null;
+    saveQueue();
+    runQueue();
+  });
+}
+
+// 順番待ちが全部終わったとき: 結果を知らせ、うまくいかなかったジャンルは読み直して実際の状態に合わせる
+function finishQueue() {
+  updateQueueStatus();
+  var problems = moveProblems, done = moveDone, reload = needReload;
+  moveProblems = []; moveDone = 0; needReload = {};
+  Object.keys(reload).forEach(function (id) { delete cache[id]; savedPut(id, null); }); // 実際の状態に合わせるため、保存した一覧も捨てる
+  if (problems.length) toast(problems[0] + (problems.length > 1 ? '（ほか ' + (problems.length - 1) + ' 件）' : '') + (done ? ' ／ ' + done + ' 件は移動済み' : ''), 10000);
+  else if (done) toast(done + ' 件の移動が終わりました');
+  if (reload[current]) {
+    // いま見ているジャンルの表示が実際とずれているので、読み直す
+    closeView();
+    var g = genres.filter(function (x) { return x.id === current; })[0];
+    if (g) openGenre(g);
+  }
+}
+
+function show(g, data) {
+  items = data.files.map(function (f) { return parseItem(f, data.metas); });
+  data.thumbs = data.thumbs || {};
+  items.forEach(function (it) { if (it.fid in data.thumbs) it.t = data.thumbs[it.fid]; });
+  pxNames = {};
+  items.forEach(function (it) { if (it.source === 'pixiv' && it.meta && it.meta.name) pxNames[it.author] = it.meta.name; });
+  buildPersons();
+  // 作者の一覧
+  // 数は「投稿の数」で出す（1つの投稿に画像が4枚あっても 1 と数える）
+  var seen = {}, counts = {}, labels = {};
+  items.forEach(function (it) {
+    var k = pkey(it), pk = k + '|' + postKey(it);
+    if (!seen[pk]) { seen[pk] = true; counts[k] = (counts[k] || 0) + 1; }
+    labels[k] = personLabel[k] || authorLabel(it);
+  });
+  var sel = $('author');
+  sel.innerHTML = '';
+  sel.add(new Option('すべての作者 (' + countPosts(items) + ')', ''));
+  Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; }).forEach(function (k) { sel.add(new Option(labels[k] + ' (' + counts[k] + ')', k)); });
+  restorePage = true; // 前回と同じジャンル・絞り込み・並べ方なら、前回見ていたページを開く
+  render();
+}
+
+// ---- 一覧 ----
+// keepPage: 表示中のページ番号を保つ（移動のあとなど）。ふだんは1ページ目に戻る
+// ---- 連作（PC のギャラリーと同じ考え方） ----
+// 同じ作者が、同じ題名・本文に「①②」「1/11」「（1）」「その1」「…まとめ1」などの番号を付けて分けて出したものを1つにまとめる。
+// 番号を除くとほとんど何も残らないもの（「（1）」だけなど）は、前の投稿から3日以内のものだけを続きとみなす。
+var CIRCLED_RE = /[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳]/g, SERIES_GAP = 3 * 86400e3;
+function seriesBase(it) {
+  var m = it.meta;
+  if (!m) return null;
+  var text = m.text || '';
+  // pixiv の本文は「題名 改行 タグ」なので、題名（1行目）だけを使う
+  var s = (it.source === 'pixiv' ? text.split('\n').slice(0, 1) : text.split('\n').slice(0, 3)).join(' ').replace(/https?:\/\/\S+/g, '');
+  s = s.replace(CIRCLED_RE, '＃')
+    .replace(/(^|[^\d/／])\d{1,3}\s*[/／]\s*\d{1,3}(?![\d/／])/g, '$1＃')
+    .replace(/[（(]\s*\d{1,3}\s*[)）]/g, '＃')
+    .replace(/(その|part\.?|#|＃|no\.?|№|vol\.?)\s*\d{1,3}(?!\d)/gi, '＃')
+    .replace(/\d{1,3}\s*$/, '＃')
+    .replace(/\s+/g, ' ').trim();
+  return s.indexOf('＃') >= 0 ? s : null;
+}
+function seriesKeys(list) {
+  var byKey = {}, seen = {}, out = {};
+  list.forEach(function (it) {
+    if (!it.id || seen[it.id]) return;
+    seen[it.id] = true;
+    if (it.meta && it.meta.thread && it.meta.thread !== it.id) return;
+    var base = seriesBase(it);
+    if (!base) return;
+    var k = it.author + '|' + base;
+    (byKey[k] = byKey[k] || []).push({ id: it.id, time: it.time || 0, weak: base.replace(/[＃\s\p{P}\p{S}]/gu, '').length < 3 });
+  });
+  Object.keys(byKey).forEach(function (k) {
+    var posts = byKey[k];
+    if (posts.length < 2) return;
+    posts.sort(function (a, b) { return a.time - b.time; });
+    var part = 0, run = [], prev = null;
+    var flush = function () { if (run.length >= 2) run.forEach(function (id) { out[id] = 's:' + k + '#' + part; }); run = []; part++; };
+    posts.forEach(function (p) { if (prev && p.weak && p.time - prev.time > SERIES_GAP) flush(); run.push(p.id); prev = p; });
+    flush();
+  });
+  return out;
+}
+
+var restorePage = false;
+function viewKey() { return [current, $('author').value, $('q').value, $('sort').value, $('group').value].join('#'); }
+function render(keepPage) {
+  var a = $('author').value, q = $('q').value.trim().toLowerCase(), s = $('sort').value, mode = $('group').value;
+  var list = items.filter(function (it) {
+    if (a && pkey(it) !== a) return false;
+    if (!q) return true;
+    return [it.author, it.name, it.meta && it.meta.name, it.meta && it.meta.text].join('\n').toLowerCase().indexOf(q) >= 0;
+  });
+  // まとめ方: スレッドごと（同じ作者の連投・番号付きの連作）／ポストごと／1枚ずつ。情報の無いものは1枚ずつ
+  var series = mode === 'thread' ? seriesKeys(list) : {};
+  var map = {}, order = [];
+  list.forEach(function (it) {
+    var k = !it.id || mode === 'none' ? 'f:' + it.name
+      : mode === 'thread' && it.meta && it.meta.thread && it.meta.thread !== it.id ? 't:' + it.meta.thread
+      : mode === 'thread' && series[it.id] ? series[it.id]
+      : 'p:' + it.id;
+    if (!map[k]) { map[k] = []; order.push(k); }
+    map[k].push(it);
+  });
+  view = order.map(function (k) {
+    var g = map[k].sort(function (x, y) { return x.time - y.time || x.n - y.n; });
+    return { items: g, head: g[0] };
+  });
+  var byNew = function (x, y) { return y.head.time - x.head.time || x.head.n - y.head.n; };
+  if (s === 'new') view.sort(byNew);
+  else if (s === 'old') view.sort(function (x, y) { return -byNew(x, y); });
+  else if (s === 'author') {
+    var nm = function (en) { return (personLabel[pkey(en.head)] || authorLabel(en.head)).toLowerCase(); };
+    view.sort(function (x, y) { return nm(x).localeCompare(nm(y)) || pkey(x.head).localeCompare(pkey(y.head)) || byNew(x, y); });
+  }
+  else { view.forEach(function (en) { en.rk = shuffleKey(en.head.name); }); view.sort(function (x, y) { return x.rk - y.rk; }); }
+  setStatus(countPosts(list) + ' 投稿（' + list.length + ' 枚） / 全 ' + countPosts(items) + ' 投稿');
+  pageNo = keepPage ? Math.min(pageNo, Math.max(0, pageCount() - 1)) : 0;
+  if (restorePage) {
+    restorePage = false;
+    try {
+      var sv = JSON.parse(localStorage.getItem('xg-page') || 'null');
+      if (sv && sv.key === viewKey()) pageNo = Math.max(0, Math.min(sv.page, pageCount() - 1));
+    } catch (e) {}
+  }
+  showPage();
+}
+
+// サムネイルの URL を、まだ分かっていない分だけサーバーから取る（ページの分など。最大 400 件ずつ）
+var thumbWait = {};
+function ensureThumbs(list) {
+  var genreId = current, data = cache[genreId];
+  if (!data) return Promise.resolve();
+  var ids = [], seen = {};
+  list.forEach(function (it) { if (it.t === undefined && !seen[it.fid]) { seen[it.fid] = true; ids.push(it.fid); } });
+  if (!ids.length) return Promise.resolve();
+  var key = genreId + ':' + ids.join(',');
+  if (!thumbWait[key]) {
+    var jobs = [];
+    for (var k = 0; k < ids.length; k += 400) jobs.push(call('getThumbs', genreId, ids.slice(k, k + 400)));
+    thumbWait[key] = Promise.all(jobs).then(function (parts) {
+      var got = [].concat.apply([], parts);
+      ids.forEach(function (id, n) { data.thumbs[id] = got[n] || ''; });
+      if (current === genreId) items.forEach(function (it) { if (it.fid in data.thumbs) it.t = data.thumbs[it.fid]; });
+    }).catch(function () {
+      ids.forEach(function (id) { data.thumbs[id] = ''; }); // 取れなかったときは、ドライブの標準のサムネイルを使う
+      if (current === genreId) items.forEach(function (it) { if (it.fid in data.thumbs && it.t === undefined) it.t = ''; });
+    }).then(function () { delete thumbWait[key]; });
+  }
+  return thumbWait[key];
+}
+
+function pageCount() { return Math.ceil(view.length / pageSize); }
+function showPage() {
+  try { localStorage.setItem('xg-page', JSON.stringify({ key: viewKey(), page: pageNo })); } catch (e) {}
+  var grid = $('grid');
+  grid.innerHTML = '';
+  if (!view.length) {
+    var e = document.createElement('div'); e.id = 'empty'; e.textContent = '表示するものがありません。'; grid.appendChild(e);
+  } else {
+    var start = pageNo * pageSize, end = Math.min(view.length, start + pageSize), frag = document.createDocumentFragment();
+    var onPage = [];
+    for (var i = start; i < end; i++) { frag.appendChild(makeCard(view[i], i)); onPage = onPage.concat(view[i].items); }
+    grid.appendChild(frag);
+    // このページの投稿の画像（拡大表示で使う分も含めて）の URL をまとめて取り、取れたら一覧の画像を出す
+    ensureThumbs(onPage).then(function () {
+      [].forEach.call(grid.querySelectorAll('img[data-i]'), function (img) { var en = view[+img.dataset.i]; if (en && !img.getAttribute('src')) img.src = thumb(en.head, gridSize()); });
+    });
+  }
+  buildPager($('pagerTop'), false);
+  buildPager($('pagerBottom'), true);
+}
+
+// 「‹ 1 … 4 [5] 6 … 20 ›」と「101〜150 件目 / 全 980 件」。下のページ送りには件数の選択欄も置く
+function buildPager(box, withSize) {
+  var n = pageCount();
+  box.innerHTML = '';
+  box.hidden = n <= 1 && !withSize;
+  if (!view.length) { box.hidden = true; return; }
+  var btn = function (label, page, cur) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.textContent = label;
+    if (cur) b.className = 'cur';
+    if (page < 0 || page >= n) b.disabled = true; else b.onclick = function () { goPage(page); };
+    return b;
+  };
+  if (n > 1) {
+    box.appendChild(btn('‹', pageNo - 1));
+    var nums = {}; nums[0] = true; nums[n - 1] = true;
+    for (var k = pageNo - 1; k <= pageNo + 1; k++) if (k >= 0 && k < n) nums[k] = true;
+    var prev = -1;
+    Object.keys(nums).map(Number).sort(function (x, y) { return x - y; }).forEach(function (k) {
+      if (k > prev + 1) { var s = document.createElement('span'); s.textContent = '…'; box.appendChild(s); }
+      box.appendChild(btn(String(k + 1), k, k === pageNo));
+      prev = k;
+    });
+    box.appendChild(btn('›', pageNo + 1));
+  }
+  if (withSize) {
+    var sel = document.createElement('select');
+    PAGE_SIZES.forEach(function (v) { sel.add(new Option(v + '件ずつ', String(v))); });
+    sel.value = String(pageSize);
+    sel.onchange = function () { setPageSize(+sel.value); };
+    box.appendChild(sel);
+  }
+  var info = document.createElement('div');
+  info.className = 'info';
+  var start = pageNo * pageSize;
+  // 並んでいる件数。スレッド・連作をまとめているときは、投稿の数より少なくなる
+  var posts = {}, np = 0;
+  view.forEach(function (en) { en.items.forEach(function (it) { var k = postKey(it); if (!posts[k]) { posts[k] = true; np++; } }); });
+  info.textContent = (start + 1) + '〜' + Math.min(view.length, start + pageSize) + ' 件目 / 全 ' + view.length + ' 件' + (np !== view.length ? '（' + np + ' 投稿をまとめた数）' : '');
+  box.appendChild(info);
+}
+function goPage(k) {
+  pageNo = Math.max(0, Math.min(k, pageCount() - 1));
+  showPage();
+  window.scrollTo(0, 0);
+}
+function setPageSize(v) {
+  var first = pageNo * pageSize; // いま見ているページの先頭の件を含むページを開く
+  pageSize = v;
+  $('pageSize').value = String(v);
+  try { localStorage.setItem('xg-page-size', String(v)); } catch (e) {}
+  pageNo = Math.floor(first / pageSize);
+  showPage();
+}
+
+function makeCard(en, i) {
+  var it = en.head, card = document.createElement('div');
+  card.className = 'card';
+  var img = document.createElement('img');
+  img.loading = 'lazy'; img.alt = ''; img.referrerPolicy = 'no-referrer';
+  img.dataset.i = i;
+  if (it.t !== undefined) img.src = thumb(it, gridSize()); // まだ URL が分からないものは、取れてから出す
+  card.appendChild(img);
+  if (it.video) { var p = document.createElement('span'); p.className = 'play'; p.textContent = '▶'; card.appendChild(p); }
+  if (en.items.length > 1) { var b = document.createElement('span'); b.className = 'badge'; b.textContent = en.items.length + '枚'; card.appendChild(b); }
+  card.onclick = function () { openView(i); };
+  return card;
+}
+
+// ---- 拡大表示（本文 → 画像を縦に並べる） ----
+function linkify(el, text) {
+  text.split(/(https?:\/\/[^\s]+)/g).forEach(function (p, i) {
+    if (i % 2) { var a = document.createElement('a'); a.href = p; a.rel = 'noopener'; a.textContent = p; el.appendChild(a); }
+    else if (p) el.appendChild(document.createTextNode(p));
+  });
+}
+
+// atEnd を付けると、投稿の最後のページを出す（キーで前の投稿へ戻ったとき）
+function openView(i, atEnd) {
+  if (i < 0 || i >= view.length) return;
+  var missing = view[i].items.some(function (it) { return it.t === undefined; });
+  if (missing) { ensureThumbs(view[i].items).then(function () { openView(i, atEnd); }); return; }
+  vEdge = 0;
+  // 別のページの投稿へ進んだら、裏の一覧もそのページにする（閉じたときに続きから選べるように）
+  if (Math.floor(i / pageSize) !== pageNo) { pageNo = Math.floor(i / pageSize); showPage(); }
+  vi = i;
+  var en = view[i], body = $('vbody'), lastId = null;
+  bigIo.disconnect(); // 前の投稿の、まだ読み込んでいない大きい画像は取りに行かない
+  body.innerHTML = '';
+  en.items.forEach(function (it) {
+    if (it.id !== lastId || !it.id) {
+      lastId = it.id;
+      var box = document.createElement('div');
+      box.className = 'ptext';
+      var when = document.createElement('span');
+      when.className = 'when';
+      var who = it.source === 'pixiv' ? authorLabel(it) : (it.meta && it.meta.name ? it.meta.name + ' @' + it.author : authorLabel(it));
+      when.textContent = who + (it.time ? ' · ' + new Date(it.time).toLocaleString('ja-JP') : '');
+      box.appendChild(when);
+      if (it.meta && it.meta.text) linkify(box, it.meta.text);
+      body.appendChild(box);
+      if (it.url) {
+        var srcLink = document.createElement('a');
+        srcLink.className = 'vlink';
+        srcLink.href = it.url; srcLink.rel = 'noopener';
+        srcLink.textContent = it.source === 'pixiv' ? 'pixiv で開く ↗' : '元の投稿を開く ↗';
+        body.appendChild(srcLink);
+      }
+    }
+    var img = document.createElement('img');
+    img.alt = ''; img.referrerPolicy = 'no-referrer';
+    // まず一覧と同じ小さい画像（読み込み済みのことが多い）をすぐ出し、大きい画像が届いたら差し替える
+    img.src = thumb(it, gridSize());
+    img.className = 'lowres';
+    img.dataset.big = thumb(it, viewSize());
+    img.dataset.fid = it.fid;
+    bigIo.observe(img);
+    if (!it.video) {
+      // タップすると、その位置を中心に原寸で見る
+      img.classList.add('zoomable');
+      img.onclick = (function (item) { return function (e) {
+        var r = this.getBoundingClientRect();
+        openZoom(item, this.currentSrc || this.src, (e.clientX - r.left) / (r.width || 1), (e.clientY - r.top) / (r.height || 1));
+      }; })(it);
+    }
+    body.appendChild(img);
+    var open = document.createElement('a');
+    open.className = 'vlink';
+    open.href = 'https://drive.google.com/file/d/' + it.fid + '/view';
+    open.rel = 'noopener';
+    open.textContent = it.video ? '▶ 動画をドライブで再生する ↗' : '原寸をドライブで開く ↗';
+    body.appendChild(open);
+    if (en.items.length > 1) {
+      // 複数枚の投稿の中の、この1枚だけを移す・ゴミ箱へ送る
+      var one = document.createElement('a');
+      one.className = 'vlink';
+      one.href = '#';
+      one.textContent = '↪ この1枚を移動・ゴミ箱へ';
+      one.onclick = (function (item) { return function (e) { e.preventDefault(); openSheet([item]); }; })(it);
+      body.appendChild(one);
+    }
+  });
+  body.scrollTop = 0;
+  if (atEnd) {
+    // 画像の大きさが決まるのを少し待ってから、いちばん下へ
+    var toEnd = function () { if (vi === i) { body.scrollTop = body.scrollHeight; updatePageBadge(); } };
+    setTimeout(toEnd, 0); setTimeout(toEnd, 150);
+  }
+  $('vpos').textContent = '投稿 ' + (i + 1) + ' / ' + view.length;
+  updatePageBadge();
+  $('vprev').disabled = i <= 0;
+  $('vnext').disabled = i >= view.length - 1;
+  // 次のポストの1枚目を先に読み込んでおく（移ったときにすぐ出るように）
+  if (view[i + 1] && !saving()) {
+    var nx = view[i + 1].head;
+    ensureThumbs([nx]).then(function () { var pre = new Image(); pre.referrerPolicy = 'no-referrer'; pre.src = thumb(nx, viewSize()); });
+  }
+  // 最初の1回だけ、スワイプで移れることを知らせる
+  var seenHint = false;
+  try { seenHint = localStorage.getItem('xg-hint') === '1'; localStorage.setItem('xg-hint', '1'); } catch (e) {}
+  if (!seenHint && !hintShown) { hintShown = true; $('vhint').hidden = false; setTimeout(function () { $('vhint').hidden = true; }, 3500); }
+  $('view').classList.add('open');
+  setVh();
+  // 端末の「戻る」で閉じられるようにする（埋め込みの中では使えないことがあるので、失敗しても続ける）
+  try { if (!history.state || !history.state.view) history.pushState({ view: true }, ''); } catch (e) {}
+}
+function closeView() {
+  closeZoom(); $('view').classList.remove('open'); $('vbody').innerHTML = ''; $('vpage').textContent = ''; vi = -1;
+  if (pendingFresh) { var g = pendingFresh; pendingFresh = null; if (current === g.id && cache[g.id]) show(g, cache[g.id]); }
+}
+
+// いちばん大きく見えている画像を「いま見ている1枚」として、上の真ん中に「2 / 5 枚目」と出す
+function currentImg() {
+  var body = $('vbody'), imgs = body.querySelectorAll('img');
+  if (!imgs.length) return { k: -1, imgs: imgs };
+  var br = body.getBoundingClientRect(), best = 0, bestSeen = -1;
+  for (var k = 0; k < imgs.length; k++) {
+    var r = imgs[k].getBoundingClientRect();
+    var seen = Math.min(r.bottom, br.bottom) - Math.max(r.top, br.top);
+    if (seen > bestSeen + 1) { best = k; bestSeen = seen; }
+  }
+  return { k: best, imgs: imgs };
+}
+function updatePageBadge() {
+  var c = currentImg(), badge = $('vpage');
+  if (vi < 0 || c.k < 0) { badge.textContent = ''; return; }
+  badge.textContent = c.imgs.length === 1 ? '1枚' : (c.k + 1) + ' / ' + c.imgs.length + ' 枚目';
+}
+// いま見ている1枚（の項目）
+function currentItem() {
+  var c = currentImg();
+  if (vi < 0 || c.k < 0) return null;
+  var fid = c.imgs[c.k].dataset.fid;
+  return view[vi].items.filter(function (it) { return it.fid === fid; })[0] || null;
+}
+
+// ---- キーでページ送り（PC のギャラリーと同じ動き） ----
+// 次（前）の1枚の頭へ送る。投稿の切れ目では一度止まり、もう一度押すと次（前）の投稿へ。押しっぱなしでは移らない
+var vEdge = 0;
+function vPage(dir, held) {
+  var b = $('vbody'), top = b.scrollTop, h = b.clientHeight;
+  var maxTop = b.scrollHeight - h, before = vEdge;
+  vEdge = 0;
+  if (fitMode === 'fit') {
+    var bt = b.getBoundingClientRect().top;
+    var at = function (el) { return Math.min(maxTop, el.getBoundingClientRect().top - bt + top - 4); };
+    var pages = [].slice.call(b.querySelectorAll('img')), step = h / 4, target = null;
+    if (dir < 0) pages.reverse();
+    for (var k = 0; k < pages.length; k++) {
+      var t = at(pages[k]);
+      if (dir > 0 ? t > top + step : t < top - step) { target = t; break; }
+    }
+    if (target !== null) { b.scrollTop = Math.max(0, target); updatePageBadge(); return; }
+  } else if (dir > 0 ? top < maxTop - 4 : top > 4) {
+    b.scrollTop = top + dir * (h - 60); updatePageBadge(); return;
+  }
+  // 送るページがもう無い。まだ見えていない部分が大きく残っていれば、先にそこを見せる
+  var rest = dir > 0 ? maxTop - top : top;
+  if (rest > h / 4) { b.scrollTop = dir > 0 ? b.scrollHeight : 0; updatePageBadge(); return; }
+  // 少しだけ残っている（本文の下など）ときは、端まで見せたうえで止まる
+  if (rest > 0) { b.scrollTop = dir > 0 ? b.scrollHeight : 0; updatePageBadge(); }
+  if (before === dir && !held) {
+    if (vi + dir < 0 || vi + dir >= view.length) { vEdge = dir; toast(dir > 0 ? 'これが最後の投稿です' : 'これが最初の投稿です', 1500); return; }
+    openView(vi + dir, dir < 0); return;
+  }
+  vEdge = dir;
+  toast(dir > 0 ? '最後のページです。もう一度押すと次の投稿へ進みます' : '最初のページです。もう一度押すと前の投稿へ戻ります', 2000);
+}
+$('vbody').addEventListener('scroll', updatePageBadge, { passive: true });
+
+// 大きい画像は、画面の近くに来たものから読み込む（枚数の多い投稿で、全部を一度に取りに行かないように）
+var bigIo = new IntersectionObserver(function (entries) {
+  entries.forEach(function (e) {
+    if (!e.isIntersecting) return;
+    var img = e.target, url = img.dataset.big;
+    bigIo.unobserve(img);
+    if (!url) return;
+    var loader = new Image();
+    loader.referrerPolicy = 'no-referrer';
+    loader.onload = function () { if (img.isConnected) { img.src = url; img.classList.remove('lowres'); } };
+    loader.src = url;
+  });
+}, { root: document.getElementById('vbody'), rootMargin: '100% 0px' });
+
+// 「画面に収める」の高さの上限を、実際の表示領域から測って入れる
+function setVh() {
+  var h = $('vbody').clientHeight;
+  if (h > 100) document.documentElement.style.setProperty('--vh', h + 'px');
+}
+window.addEventListener('resize', function () { if (vi >= 0) setVh(); });
+
+// ---- タップで原寸 ----
+// まず表示中の画像をそのまま拡大して出し、裏でいちばん大きい版を読み込めたら差し替える。
+// 画面の点1つに画像の点1つが対応する大きさ（原寸）にする。小さい画像は、最低でも画面の2倍の幅にする。
+var zoomOpen = false, zoomToken = 0;
+function openZoom(it, shownSrc, rx, ry) {
+  var z = $('zoom'), zi = $('zimg'), dpr = window.devicePixelRatio || 1, token = ++zoomToken;
+  var place = function (naturalW, naturalH, label) {
+    var w = Math.max(naturalW / dpr, window.innerWidth * 2);
+    zi.style.width = Math.round(w) + 'px';
+    zi.style.height = 'auto';
+    var h = w * naturalH / (naturalW || 1);
+    z.scrollLeft = Math.max(0, w * rx - window.innerWidth / 2);
+    z.scrollTop = Math.max(0, h * ry - window.innerHeight / 2);
+    $('zinfo').textContent = label;
+  };
+  zi.src = shownSrc;
+  z.classList.add('open');
+  zoomOpen = true;
+  var first = new Image();
+  first.onload = function () { if (token === zoomToken) place(first.naturalWidth, first.naturalHeight, '大きい版を読み込み中…'); };
+  first.src = shownSrc;
+  // 大きい順に試す（0 は元の大きさ）。読み込めたものを使う
+  var sizes = [0, 3200], k = 0;
+  (function tryNext() {
+    if (k >= sizes.length) { if (token === zoomToken) $('zinfo').textContent = 'これ以上大きい版はありません ・ タップで戻る'; return; }
+    var url = thumb(it, sizes[k++]), big = new Image();
+    if (url === shownSrc) return tryNext();
+    big.referrerPolicy = 'no-referrer';
+    big.onload = function () {
+      if (token !== zoomToken) return;
+      // 位置を保ったまま差し替える
+      var keepX = (z.scrollLeft + window.innerWidth / 2) / (zi.offsetWidth || 1), keepY = (z.scrollTop + window.innerHeight / 2) / (zi.offsetHeight || 1);
+      zi.src = url;
+      rx = keepX; ry = keepY;
+      place(big.naturalWidth, big.naturalHeight, '原寸 ' + big.naturalWidth + '×' + big.naturalHeight + ' ・ タップで戻る');
+    };
+    big.onerror = tryNext;
+    big.src = url;
+  })();
+}
+function closeZoom() {
+  if (!zoomOpen) return;
+  zoomOpen = false; zoomToken++;
+  $('zoom').classList.remove('open');
+  $('zimg').removeAttribute('src');
+}
+$('zimg').onclick = closeZoom;
+$('zclose').onclick = closeZoom;
+$('vclose').onclick = function () {
+  var viaHistory = false;
+  try { viaHistory = !!(history.state && history.state.view); } catch (e) {}
+  if (viaHistory) history.back(); else closeView();
+};
+window.addEventListener('popstate', function () {
+  // 原寸表示の最中に「戻る」を押したら、原寸表示だけを閉じる（拡大表示には残る）
+  if (zoomOpen) { closeZoom(); try { history.pushState({ view: true }, ''); } catch (e) {} return; }
+  if (vi >= 0) closeView();
+});
+$('vprev').onclick = function () { openView(vi - 1); };
+$('vnext').onclick = function () { openView(vi + 1); };
+
+// 読み込む画像の大きさは、端末の画面（長いほうの辺 × 画素の細かさ）に合わせて選ぶ。大きすぎるものは取らない
+var hintShown = false;
+function viewSize() {
+  var need = Math.ceil(Math.max(window.innerWidth, window.innerHeight) * (window.devicePixelRatio || 1));
+  if (saving()) return need > 800 ? 1000 : 800; // 節約のときは控えめに（拡大して見たいときは、タップで原寸）
+  var steps = [800, 1200, 1600];
+  for (var k = 0; k < steps.length; k++) if (steps[k] >= need) return steps[k];
+  return 1600;
+}
+
+// 表示のしかた: 画面に収める（標準）／幅に合わせる（漫画を縦に読むとき）
+var fitMode = 'fit';
+try { if (localStorage.getItem('xg-fit') === 'wide') fitMode = 'wide'; } catch (e) {}
+function applyFit() {
+  $('view').classList.toggle('fit', fitMode === 'fit');
+  $('view').classList.toggle('wide', fitMode === 'wide');
+  // ボタンには「押すと切り替わる先」を短く出す
+  $('vfit').textContent = fitMode === 'fit' ? '↕ 幅' : '⤢ 全体';
+  $('vfit').title = fitMode === 'fit' ? '幅に合わせる（縦にスクロールして読む）' : '画面に収める（1枚が全部見える）';
+}
+$('vfit').onclick = function () {
+  fitMode = fitMode === 'fit' ? 'wide' : 'fit';
+  try { localStorage.setItem('xg-fit', fitMode); } catch (e) {}
+  applyFit();
+};
+applyFit();
+
+// 左右のスワイプで前後のポストへ。縦のスクロールや、2本指の拡大とは区別する
+var sw = null;
+$('vbody').addEventListener('touchstart', function (e) {
+  sw = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() } : null;
+}, { passive: true });
+$('vbody').addEventListener('touchmove', function (e) { if (e.touches.length > 1) sw = null; }, { passive: true });
+$('vbody').addEventListener('touchend', function (e) {
+  if (!sw || !e.changedTouches.length) return;
+  var dx = e.changedTouches[0].clientX - sw.x, dy = e.changedTouches[0].clientY - sw.y, dt = Date.now() - sw.t;
+  sw = null;
+  // 横に 60px 以上、縦の動きの2倍以上、1秒以内の動きだけをスワイプとみなす
+  if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 2 || dt > 1000) return;
+  if (window.visualViewport && window.visualViewport.scale > 1.05) return; // 拡大して見ている最中は動かさない
+  openView(vi + (dx < 0 ? 1 : -1));
+}, { passive: true });
+// ---- キー操作（PC やタブレットのキーボードで使うとき）。一覧は ? キーか右上の「?」で出す ----
+function toggleHelp(on) { $('help').classList.toggle('open', on === undefined ? !$('help').classList.contains('open') : on); }
+$('helpBtn').onclick = function () { toggleHelp(true); };
+$('help').onclick = function () { toggleHelp(false); };
+// 1枚だけ移す・ゴミ箱へ送る（複数枚の投稿のときだけ。1枚の投稿なら投稿まるごと）
+function oneOrAll() {
+  var it = currentItem();
+  return it && view[vi].items.length > 1 ? [it] : null;
+}
+document.addEventListener('keydown', function (e) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  var k = e.key, el = e.target, typing = el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+  if ($('help').classList.contains('open')) {
+    if (k === 'Escape' || k === '?') { e.preventDefault(); toggleHelp(false); }
+    return;
+  }
+  if (typing) { if (k === 'Escape') el.blur(); return; }
+  if (k === '?') { e.preventDefault(); toggleHelp(true); return; }
+
+  // 移動先を選ぶ画面: ↑↓ で選んで Enter、数字キーでその番号の行、Esc でやめる
+  if ($('sheet').classList.contains('open')) {
+    var btns = [].slice.call($('sheet-list').querySelectorAll('button')), at = btns.indexOf(document.activeElement);
+    if (k === 'Escape') { e.preventDefault(); closeSheet(); }
+    else if (k === 'ArrowDown' || k === 'ArrowUp') {
+      e.preventDefault();
+      var n = at < 0 ? (k === 'ArrowDown' ? 0 : btns.length - 1) : (at + (k === 'ArrowDown' ? 1 : -1) + btns.length) % btns.length;
+      if (btns[n]) btns[n].focus();
+    } else if (/^[1-9]$/.test(k) && btns[+k - 1]) { e.preventDefault(); btns[+k - 1].click(); }
+    return;
+  }
+  if (zoomOpen) { if (k === 'Escape' || k === 'z' || k === 'Z') { e.preventDefault(); closeZoom(); } return; }
+
+  // 一覧
+  if (vi < 0) {
+    if (k === 'ArrowLeft' && pageNo > 0) { e.preventDefault(); goPage(pageNo - 1); }
+    else if (k === 'ArrowRight' && pageNo < pageCount() - 1) { e.preventDefault(); goPage(pageNo + 1); }
+    else if (k === '/') { e.preventDefault(); $('q').focus(); }
+    else if (k === 'r' || k === 'R') { e.preventDefault(); $('reload').onclick(); }
+    return;
+  }
+
+  // 拡大表示
+  if (k === 'PageDown' || k === 'ArrowDown' || (k === ' ' && !e.shiftKey)) { e.preventDefault(); vPage(1, e.repeat); }
+  else if (k === 'PageUp' || k === 'ArrowUp' || (k === ' ' && e.shiftKey)) { e.preventDefault(); vPage(-1, e.repeat); }
+  else if (k === 'ArrowLeft') { e.preventDefault(); openView(vi - 1); }
+  else if (k === 'ArrowRight') { e.preventDefault(); openView(vi + 1); }
+  else if (k === 'Escape') { e.preventDefault(); $('vclose').onclick(); }
+  else if (k === 'f' || k === 'F') { e.preventDefault(); $('vfit').onclick(); }
+  else if (k === 'm' || k === 'M') {
+    e.preventDefault();
+    openSheet(e.shiftKey ? oneOrAll() : null);
+    var first = $('sheet-list').querySelector('button'); if (first) first.focus();
+  }
+  else if (k === 'Delete' && !e.repeat) {
+    e.preventDefault();
+    sheetItems = e.shiftKey ? oneOrAll() : null;
+    var n = (sheetItems || view[vi].items).length;
+    doMove('trash', 'ゴミ箱');
+    toast('ゴミ箱へ送りました（' + n + '枚）。PC のギャラリーの「ゴミ箱」から戻せます', 3000);
+  }
+  else if (k === 'z' || k === 'Z') {
+    var c = currentImg(), it = currentItem();
+    if (it && !it.video) { e.preventDefault(); openZoom(it, c.imgs[c.k].currentSrc || c.imgs[c.k].src, 0.5, 0.5); }
+  }
+});
+
+$('author').onchange = function () { render(); };
+$('q').oninput = function () { render(); };
+$('sort').onchange = function () { if (this.value === 'random') seed = Math.floor(Math.random() * 4294967296); render(); };
+$('group').onchange = function () { try { localStorage.setItem('xg-group', this.value); } catch (e) {} render(); };
+$('pageSize').onchange = function () { setPageSize(+this.value); };
+$('quality').onchange = function () {
+  quality = this.value;
+  try { localStorage.setItem('xg-quality', quality); } catch (e) {}
+  if (current) showPage(); // 一覧の画像を、選んだ画質で出し直す
+  toast(saving() ? '通信を節約します（画像を小さめに、先読みなし）' : '高画質で表示します');
+};
+// いま見ているジャンルを読み直す（PC やブラウザで新しく保存したものを出す）。見ていたページは保つ
+$('reload').onclick = function () {
+  if (!current) return;
+  var g = genres.filter(function (x) { return x.id === current; })[0];
+  if (!g) return;
+  delete cache[current];
+  try { localStorage.setItem('xg-page', JSON.stringify({ key: viewKey(), page: pageNo })); } catch (e) {}
+  idb().then(function (db) { try { if (db) db.transaction('genres', 'readwrite').objectStore('genres').delete(g.id); } catch (e) {} }).then(function () { openGenre(g); });
+};
+
+// ---- 端末に取っておいた画像が壊れていたら（ドライブの URL の期限切れなど）、捨てて取り直す ----
+document.addEventListener('error', function (e) {
+  var img = e.target;
+  if (!img || img.tagName !== 'IMG' || img.dataset.retried) return;
+  var src = img.getAttribute('src') || '';
+  if (src.indexOf('t/') !== 0) return;
+  img.dataset.retried = '1';
+  var key = new URL(src, location.href); var real = key.searchParams.get('u');
+  caches.open('xg-img-v1').then(function (c) { return c.delete(key.origin + key.pathname); }).catch(function () {}).then(function () { if (real) img.src = real; });
+}, true);
+
+// ---- 起動 ----
+// ホーム画面に置けるようにする部品（サービスワーカー）を登録する
+if (navigator.serviceWorker) navigator.serviceWorker.register('sw.js').catch(function () {});
+function gate(text, button) {
+  $('gate').classList.add('open');
+  $('gateText').textContent = text;
+  $('gateBtn').hidden = !button;
+}
+$('gateBtn').onclick = function () { XG.login(); };
+XG.ready().then(function (st) {
+  if (st === 'ok') { $('gate').classList.remove('open'); return start(); }
+  if (st === 'config') return gate('設定がまだです。config.js に、Google Cloud で作った「OAuth クライアント ID」を書いてください。', false);
+  if (st === 'login') return gate('Google ドライブの「Xのいろいろ保存」を見るために、Google アカウントでログインしてください。\n最初の1回だけ、ドライブを使う許可を求められます。', true);
+  gate('ログインできませんでした（' + st.slice(6) + '）。\nもう一度試してください。', true);
+});
+
+function start() {
+setStatus('読み込んでいます…', true);
+// 作者の対応表（無くても動く。読めたら、ジャンルを開くときに使う）
+var authorsReady = call('getAuthors').then(function (doc) { if (doc) authorsDoc = doc; }).catch(function () {});
+call('getGenres').then(function (list) {
+  genres = list;
+  resumeQueue();
+  if (!genres.length) { setStatus('ジャンルのフォルダが見つかりませんでした。'); showLoading('ジャンルのフォルダが見つかりませんでした'); return; }
+  buildTabs();
+  var last = null;
+  try { last = localStorage.getItem('xg-genre'); } catch (e) {}
+  var g = genres.filter(function (x) { return x.id === last; })[0];
+  if (g) authorsReady.then(function () { openGenre(g); }); else { $('tabs').classList.remove('fold'); setStatus('ジャンルを選んでください。'); $('grid').innerHTML = ''; }
+}).catch(function (e) { setStatus('読み込めませんでした: ' + (e && e.message ? e.message : e)); showLoading('読み込めませんでした'); });
+}
+</script>
+</body>
+</html>
